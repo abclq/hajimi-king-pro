@@ -7,11 +7,12 @@ WORKDIR /app
 ENV PYTHONPATH=/app
 ENV PYTHONUNBUFFERED=1
 
-# 安装系统依赖
+# 安装系统依赖（包含libxml2和libxslt用于lxml）
 RUN apt-get update && apt-get install -y \
     curl \
+    libxml2 \
+    libxslt1.1 \
     && rm -rf /var/lib/apt/lists/*
-COPY . .
 
 # 先复制依赖文件
 COPY pyproject.toml uv.lock ./
@@ -21,6 +22,9 @@ RUN pip install uv
 
 # 使用uv安装Python依赖
 RUN uv pip install --system --no-cache -r pyproject.toml
+
+# 复制应用代码
+COPY . .
 
 # 启动命令
 CMD ["python", "app/hajimi_king.py"]

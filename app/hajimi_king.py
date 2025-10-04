@@ -26,8 +26,8 @@ from utils.migration import KeyMigration
 # 获取翻译函数
 t = get_translator().t
 
-# 创建GitHub工具实例和文件管理器
-github_utils = GitHubClient.create_instance(Config.GITHUB_TOKENS)
+# 创建GitHub工具实例和文件管理器（传递认证模式和session cookie）
+github_utils = GitHubClient.create_instance(Config.GITHUB_TOKENS, Config.GITHUB_AUTH_MODE, Config.GITHUB_SESSIONS)
 
 # 统计信息
 skip_stats = {

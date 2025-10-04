@@ -17,12 +17,13 @@
 ## 🚀 核心功能
 
 1. **GitHub搜索Gemini Key** 🔍 - 基于自定义查询表达式搜索GitHub代码中的API密钥
-2. **代理支持** 🌐 - 支持多代理轮换，提高访问稳定性和成功率
-3. **增量扫描** 📊 - 支持断点续传，避免重复扫描已处理的文件
-4. **智能过滤** 🚫 - 自动过滤文档、示例、测试文件，专注有效代码
-5. **外部同步** 🔄 - 支持向[Gemini-Balancer](https://github.com/snailyp/gemini-balance)和[GPT-Load](https://github.com/tbphp/gpt-load)同步发现的密钥
-6. **付费key检测** 💰 - 检查到有效key时自动再次检查是否为付费key
-7. **数据库存储** 💾 - 支持SQLite/PostgreSQL/MySQL数据库存储，自动从文本文件迁移
+2. **双认证模式** 🔐 - 支持Token模式（API）和Web模式（Cookie），多账号轮询
+3. **代理支持** 🌐 - 支持多代理轮换，提高访问稳定性和成功率
+4. **增量扫描** 📊 - 支持断点续传，避免重复扫描已处理的文件
+5. **智能过滤** 🚫 - 自动过滤文档、示例、测试文件，专注有效代码
+6. **外部同步** 🔄 - 支持向[Gemini-Balancer](https://github.com/snailyp/gemini-balance)和[GPT-Load](https://github.com/tbphp/gpt-load)同步发现的密钥
+7. **付费key检测** 💰 - 检查到有效key时自动再次检查是否为付费key
+8. **数据库存储** 💾 - 支持SQLite/PostgreSQL/MySQL数据库存储，自动从文本文件迁移
 
 ### 🔮 待开发功能 (TODO)
 
@@ -30,10 +31,14 @@
 - [ ] **多线程支持** 🛠️ - 支持多线程并发处理，提高处理效率
 
 
-## 📋 部署教程 🗂️
+## 📋 Wiki 🗂️
 
+### 部署文档
 - [本地部署](https://github.com/hyb-oyqq/hajimi-king-pro/wiki/%E6%9C%AC%E5%9C%B0%E9%83%A8%E7%BD%B2%E6%95%99%E7%A8%8B) 🏠
 - [Docker部署](https://github.com/hyb-oyqq/hajimi-king-pro/wiki/Docker%E9%83%A8%E7%BD%B2%E6%95%99%E7%A8%8B) 🐳
+
+### AI wiki
+- [AI wiki（由AI生成，非实时更新）](https://deepwiki.com/hyb-oyqq/hajimi-king-pro/)
 
 ---
 
@@ -41,11 +46,13 @@
 
 以下是所有可配置的环境变量，在 `.env` 文件中设置：
 
-### 必填配置
+### GitHub认证配置
 
-| 变量名 | 说明 | 示例值 |
-|--------|------|--------|
-| `GITHUB_TOKENS` | GitHub API令牌（多个用逗号分隔） | `ghp_token1,ghp_token2` |
+| 变量名 | 默认值 | 说明 | 示例值 |
+|--------|--------|------|--------|
+| `GITHUB_AUTH_MODE` | `token` | 认证模式：`token`=API / `web`=Cookie | `token` 或 `web` |
+| `GITHUB_TOKENS` | 空 | GitHub API令牌（多个用逗号分隔），Token模式使用 | `ghp_token1,ghp_token2` |
+| `GITHUB_SESSION` | 空 | GitHub Session Cookie（多个用逗号分隔），Web模式使用 | `session1,session2` |
 
 ### 基础配置
 
@@ -138,6 +145,23 @@
 
 ---
 
+### 配置示例 📝
+
+```env
+# GitHub认证（二选一）
+GITHUB_AUTH_MODE=token  # 或 web
+GITHUB_TOKENS=ghp_xxxx,ghp_yyyy  # Token模式
+# GITHUB_SESSION=session1,session2  # Web模式
+
+# 基础配置
+DATA_PATH=/app/data
+STORAGE_TYPE=sql
+DB_TYPE=sqlite
+PROXY=http://proxy.example.com:8080  # 可选
+```
+
+---
+
 ### 查询配置文件 🔍
 
 编辑 `queries.txt` 文件自定义搜索规则：
@@ -161,10 +185,9 @@ AizaSy in:file filename:.env
 
 ## 🔒 安全注意事项
 
-- GitHub Token权限最小化（只需`public_repo`读取权限）
-- 定期轮换GitHub Token
-- 不要将真实的API密钥提交到版本控制
-- 定期检查和清理发现的密钥（文件或数据库）
+- GitHub Token/Session权限最小化，定期轮换
+- 不要将 `.env` 文件提交到版本控制
+- 定期检查和清理发现的密钥
 - 数据库密码使用强密码并妥善保管
 
 ---

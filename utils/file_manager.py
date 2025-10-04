@@ -415,27 +415,29 @@ class FileManager:
         if not keys:
             return
 
-        timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        # 仅在使用文本文件存储时保存到文件
+        if Config.STORAGE_TYPE == 'text':
+            timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
 
-        # 保存详细信息到详细日志文件
-        if self._keys_send_detail_filename:
-            # 确保文件和目录存在
-            self._ensure_file_exists(self._keys_send_detail_filename)
-            with open(self._keys_send_detail_filename, "a", encoding="utf-8") as f:
-                f.write(f"TIME: {timestamp}\n")
-                for key in keys:
-                    result = send_result.get(key, "unknown")
-                    f.write(f"KEY: {key} | RESULT: {result}\n")
-                f.write("-" * 80 + "\n")
+            # 保存详细信息到详细日志文件
+            if self._keys_send_detail_filename:
+                # 确保文件和目录存在
+                self._ensure_file_exists(self._keys_send_detail_filename)
+                with open(self._keys_send_detail_filename, "a", encoding="utf-8") as f:
+                    f.write(f"TIME: {timestamp}\n")
+                    for key in keys:
+                        result = send_result.get(key, "unknown")
+                        f.write(f"KEY: {key} | RESULT: {result}\n")
+                    f.write("-" * 80 + "\n")
 
-        # 保存简要信息到keys_send文件
-        if self._keys_send_filename:
-            # 确保文件和目录存在
-            self._ensure_file_exists(self._keys_send_filename)
-            with open(self._keys_send_filename, "a", encoding="utf-8") as f:
-                for key in keys:
-                    result = send_result.get(key, "unknown")
-                    f.write(f"{key} | {result}\n")
+            # 保存简要信息到keys_send文件
+            if self._keys_send_filename:
+                # 确保文件和目录存在
+                self._ensure_file_exists(self._keys_send_filename)
+                with open(self._keys_send_filename, "a", encoding="utf-8") as f:
+                    for key in keys:
+                        result = send_result.get(key, "unknown")
+                        f.write(f"{key} | {result}\n")
 
     def save_paid_keys(self, repo_name: str, file_path: str, file_url: str, paid_keys: List[str]) -> None:
         """保存付费层级的API密钥"""

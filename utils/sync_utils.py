@@ -706,70 +706,92 @@ class SyncUtils:
             logger.info("❄️ 主线程正在冷却中，跳过本次批量发送")
             return
         
+        # 步骤1: 获取锁，复制队列数据，然后立即释放锁
         while self.saving_checkpoint:
             logger.info(t('checkpoint_saving_batch_wait'))
             time.sleep(0.5)
 
         self.saving_checkpoint = True
         try:
-            # 加载checkpoint
-            logger.info(t('starting_batch_send', len(checkpoint.wait_send_balancer), len(checkpoint.wait_send_gpt_load)))
+            # 复制队列数据（在锁保护下）
+            paid_keys = list(checkpoint.wait_send_gpt_load_paid) if checkpoint.wait_send_gpt_load_paid else []
+            rate_limited_keys = list(checkpoint.wait_send_gpt_load_rate_limited) if checkpoint.wait_send_gpt_load_rate_limited else []
+            balancer_keys = list(checkpoint.wait_send_balancer) if checkpoint.wait_send_balancer else []
+            gpt_load_keys = list(checkpoint.wait_send_gpt_load) if checkpoint.wait_send_gpt_load else []
             
+            logger.info(t('starting_batch_send', len(balancer_keys), len(gpt_load_keys)))
+        finally:
+            self.saving_checkpoint = False  # 立即释放锁
+        
+        # 步骤2: 执行网络请求（不持有锁）
+        results = {}
+        
+        try:
             # 发送付费密钥队列
-            if checkpoint.wait_send_gpt_load_paid and self.gpt_load_paid_enabled:
-                paid_keys = list(checkpoint.wait_send_gpt_load_paid)
+            if paid_keys and self.gpt_load_paid_enabled:
                 logger.info(f"💎 处理付费密钥队列: {len(paid_keys)} 个")
-
-                result_code = self._send_gpt_load_paid_worker(paid_keys)
-
-                if result_code == 'ok':
-                    # 清空队列
-                    checkpoint.wait_send_gpt_load_paid.clear()
-                    logger.info(f"💎 付费密钥队列已清空: {len(paid_keys)} 个密钥已发送")
+                results['paid'] = self._send_gpt_load_paid_worker(paid_keys)
+                if results['paid'] == 'ok':
+                    logger.info(f"💎 付费密钥发送成功: {len(paid_keys)} 个")
                 else:
-                    logger.error(f"💎 付费密钥队列处理失败: {result_code}")
+                    logger.error(f"💎 付费密钥发送失败: {results['paid']}")
             
             # 发送429密钥队列
-            if checkpoint.wait_send_gpt_load_rate_limited and self.gpt_load_rate_limited_enabled:
-                rate_limited_keys = list(checkpoint.wait_send_gpt_load_rate_limited)
+            if rate_limited_keys and self.gpt_load_rate_limited_enabled:
                 logger.info(f"⏰ 处理429密钥队列: {len(rate_limited_keys)} 个")
-
-                result_code = self._send_gpt_load_rate_limited_worker(rate_limited_keys)
-
-                if result_code == 'ok':
-                    # 清空队列
-                    checkpoint.wait_send_gpt_load_rate_limited.clear()
-                    logger.info(f"⏰ 429密钥队列已清空: {len(rate_limited_keys)} 个密钥已发送")
+                results['rate_limited'] = self._send_gpt_load_rate_limited_worker(rate_limited_keys)
+                if results['rate_limited'] == 'ok':
+                    logger.info(f"⏰ 429密钥发送成功: {len(rate_limited_keys)} 个")
                 else:
-                    logger.error(f"⏰ 429密钥队列处理失败: {result_code}")
+                    logger.error(f"⏰ 429密钥发送失败: {results['rate_limited']}")
             
             # 发送gemini balancer队列
-            if checkpoint.wait_send_balancer and self.balancer_enabled:
-                balancer_keys = list(checkpoint.wait_send_balancer)
+            if balancer_keys and self.balancer_enabled:
                 logger.info(t('processing_balancer_queue', len(balancer_keys)))
-
-                result_code = self._send_balancer_worker(balancer_keys)
-                if result_code == 'ok':
-                    # 清空队列
-                    checkpoint.wait_send_balancer.clear()
-                    logger.info(t('balancer_queue_cleared', len(balancer_keys)))
+                results['balancer'] = self._send_balancer_worker(balancer_keys)
+                if results['balancer'] == 'ok':
+                    logger.info(f"✅ Balancer密钥发送成功: {len(balancer_keys)} 个")
                 else:
-                    logger.error(t('balancer_queue_failed', result_code))
+                    logger.error(t('balancer_queue_failed', results['balancer']))
 
             # 发送gpt_load队列
-            if checkpoint.wait_send_gpt_load and self.gpt_load_enabled:
-                gpt_load_keys = list(checkpoint.wait_send_gpt_load)
+            if gpt_load_keys and self.gpt_load_enabled:
                 logger.info(t('processing_gpt_load_queue', len(gpt_load_keys)))
-
-                result_code = self._send_gpt_load_worker(gpt_load_keys)
-
-                if result_code == 'ok':
-                    # 清空队列
-                    checkpoint.wait_send_gpt_load.clear()
-                    logger.info(t('gpt_load_queue_cleared', len(gpt_load_keys)))
+                results['gpt_load'] = self._send_gpt_load_worker(gpt_load_keys)
+                if results['gpt_load'] == 'ok':
+                    logger.info(f"✅ GPT-load密钥发送成功: {len(gpt_load_keys)} 个")
                 else:
-                    logger.error(t('gpt_load_queue_failed', result_code))
-
+                    logger.error(t('gpt_load_queue_failed', results['gpt_load']))
+        
+        except Exception as e:
+            stacktrace = traceback.format_exc()
+            logger.error(t('batch_send_error', e) + f"\n{stacktrace}")
+            return
+        
+        # 步骤3: 再次获取锁，清空成功发送的队列，保存checkpoint
+        while self.saving_checkpoint:
+            logger.info(t('checkpoint_saving_batch_wait'))
+            time.sleep(0.5)
+        
+        self.saving_checkpoint = True
+        try:
+            # 清空成功发送的队列
+            if results.get('paid') == 'ok' and paid_keys:
+                checkpoint.wait_send_gpt_load_paid.clear()
+                logger.info(f"💎 付费密钥队列已清空: {len(paid_keys)} 个")
+            
+            if results.get('rate_limited') == 'ok' and rate_limited_keys:
+                checkpoint.wait_send_gpt_load_rate_limited.clear()
+                logger.info(f"⏰ 429密钥队列已清空: {len(rate_limited_keys)} 个")
+            
+            if results.get('balancer') == 'ok' and balancer_keys:
+                checkpoint.wait_send_balancer.clear()
+                logger.info(t('balancer_queue_cleared', len(balancer_keys)))
+            
+            if results.get('gpt_load') == 'ok' and gpt_load_keys:
+                checkpoint.wait_send_gpt_load.clear()
+                logger.info(t('gpt_load_queue_cleared', len(gpt_load_keys)))
+            
             # 保存checkpoint
             file_manager.save_checkpoint(checkpoint)
         except Exception as e:

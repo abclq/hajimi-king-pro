@@ -12,10 +12,18 @@ load_dotenv(override=False)
 
 
 class Config:
+    # GitHub认证模式配置 (token 或 web)
+    GITHUB_AUTH_MODE = os.getenv("GITHUB_AUTH_MODE", "token").lower()
+    
     GITHUB_TOKENS_STR = os.getenv("GITHUB_TOKENS", "")
 
     # 获取GitHub tokens列表
     GITHUB_TOKENS = [token.strip() for token in GITHUB_TOKENS_STR.split(',') if token.strip()]
+    
+    # GitHub Session Cookie (user_session) - 支持多个session，逗号分隔
+    GITHUB_SESSION_STR = os.getenv("GITHUB_SESSION", "")
+    GITHUB_SESSIONS = [session.strip() for session in GITHUB_SESSION_STR.split(',') if session.strip()]
+    
     DATA_PATH = os.getenv('DATA_PATH', '/app/data')
     PROXY_LIST_STR = os.getenv("PROXY", "")
     
@@ -246,12 +254,26 @@ class Config:
         
         errors = []
         
-        # 检查GitHub tokens
-        if not cls.GITHUB_TOKENS:
-            errors.append(t('github_tokens_missing'))
-            logger.error(t('github_tokens_missing_short'))
+        # 检查GitHub认证模式
+        logger.info(f"🔑 GitHub认证模式: {cls.GITHUB_AUTH_MODE}")
+        
+        # 检查GitHub配置
+        if cls.GITHUB_AUTH_MODE == 'token':
+            if not cls.GITHUB_TOKENS:
+                errors.append(t('github_tokens_missing'))
+                logger.error(t('github_tokens_missing_short'))
+            else:
+                logger.info(t('github_tokens_ok', len(cls.GITHUB_TOKENS)))
+        elif cls.GITHUB_AUTH_MODE == 'web':
+            if not cls.GITHUB_SESSIONS:
+                errors.append("❌ Web模式需要配置GITHUB_SESSION (user_session cookie值，多个用逗号分隔)")
+                logger.error("❌ GITHUB_SESSION未配置，请在.env中设置")
+                logger.info("💡 获取方法: 登录GitHub > 浏览器开发者工具 > Application > Cookies > user_session")
+            else:
+                logger.info(f"🌐 使用Web模式（基于user_session cookie）: {len(cls.GITHUB_SESSIONS)} 个session")
         else:
-            logger.info(t('github_tokens_ok', len(cls.GITHUB_TOKENS)))
+            errors.append(f"❌ 不支持的GITHUB_AUTH_MODE: {cls.GITHUB_AUTH_MODE}，支持的值: token, web")
+            logger.error(f"不支持的GITHUB_AUTH_MODE: {cls.GITHUB_AUTH_MODE}")
         
         # 检查Gemini Balancer配置
         if cls.GEMINI_BALANCER_SYNC_ENABLED:
@@ -288,7 +310,12 @@ get_translator(Config.LANGUAGE)
 
 logger.info(f"*" * 30 + " CONFIG START " + "*" * 30)
 logger.info(f"LANGUAGE: {Config.LANGUAGE}")
+logger.info(f"GITHUB_AUTH_MODE: {Config.GITHUB_AUTH_MODE}")
 logger.info(f"GITHUB_TOKENS: {len(Config.GITHUB_TOKENS)} tokens")
+if Config.GITHUB_SESSIONS:
+    logger.info(f"GITHUB_SESSIONS: {len(Config.GITHUB_SESSIONS)} sessions")
+else:
+    logger.info(f"GITHUB_SESSIONS: Not configured")
 logger.info(f"DATA_PATH: {Config.DATA_PATH}")
 logger.info(f"PROXY_LIST: {len(Config.PROXY_LIST)} proxies configured")
 logger.info(f"GEMINI_BALANCER_URL: {Config.GEMINI_BALANCER_URL or 'Not configured'}")
