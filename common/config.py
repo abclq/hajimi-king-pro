@@ -78,6 +78,9 @@ class Config:
     # Gemini模型配置
     HAJIMI_CHECK_MODEL = os.getenv("HAJIMI_CHECK_MODEL", "gemini-2.5-flash")
     HAJIMI_PAID_MODEL = os.getenv("HAJIMI_PAID_MODEL", "gemini-2.0-flash-thinking-exp-01-21")
+    
+    # 异步验证配置
+    KEY_VALIDATOR_MAX_WORKERS = int(os.getenv("KEY_VALIDATOR_MAX_WORKERS", "5"))
 
     # 文件路径黑名单配置
     FILE_PATH_BLACKLIST_STR = os.getenv("FILE_PATH_BLACKLIST", "readme,docs,doc/,.md,sample,tutorial")

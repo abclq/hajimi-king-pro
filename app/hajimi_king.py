@@ -22,6 +22,7 @@ from utils.github_client import GitHubClient
 from utils.file_manager import file_manager, Checkpoint, checkpoint
 from utils.sync_utils import sync_utils
 from utils.migration import KeyMigration
+from utils.key_validator import key_validator
 
 # 获取翻译函数
 t = get_translator().t
@@ -134,12 +135,12 @@ def should_skip_item(item: Dict[str, Any], checkpoint: Checkpoint) -> tuple[bool
     return False, ""
 
 
-def process_item(item: Dict[str, Any]) -> tuple:
+def process_item(item: Dict[str, Any]) -> int:
     """
-    处理单个GitHub搜索结果item
+    处理单个GitHub搜索结果item（异步验证模式）
     
     Returns:
-        tuple: (valid_keys_count, rate_limited_keys_count)
+        int: 找到的密钥数量
     """
     delay = random.uniform(1, 4)
     file_url = item["html_url"]
@@ -152,7 +153,7 @@ def process_item(item: Dict[str, Any]) -> tuple:
     content = github_utils.get_file_content(item)
     if not content:
         logger.warning(t('failed_fetch_content', file_url))
-        return 0, 0
+        return 0
 
     keys = extract_keys_from_content(content)
 
@@ -170,98 +171,17 @@ def process_item(item: Dict[str, Any]) -> tuple:
     keys = list(set(filtered_keys))
 
     if not keys:
-        return 0, 0
+        return 0
 
     logger.info(t('found_keys', len(keys)))
 
-    valid_keys = []
-    rate_limited_keys = []
-    paid_keys = []
-
-    # 验证每个密钥
+    # 将所有密钥添加到异步验证队列
     for key in keys:
-        validation_result = validate_gemini_key(key)
-        if validation_result and "ok" in validation_result:
-            valid_keys.append(key)
-            logger.info(t('valid_key', key))
-            
-            # 对有效密钥进行付费模型验证
-            logger.info(f"🔍 正在验证付费模型: {key[:20]}...")
-            paid_validation_result = validate_paid_model_key(key)
-            if paid_validation_result and "ok" in paid_validation_result:
-                paid_keys.append(key)
-                logger.info(f"💎 付费密钥验证成功: {key[:20]}... (支持{Config.HAJIMI_PAID_MODEL})")
-            else:
-                logger.info(f"ℹ️ 付费模型验证失败: {key[:20]}... ({paid_validation_result})")
-                
-        elif "rate_limited" in validation_result:
-            logger.warning(t('rate_limited_key', key, validation_result))
-            
-            # 根据RATE_LIMITED_HANDLING配置决定如何处理429密钥
-            handling = Config.RATE_LIMITED_HANDLING.strip().lower()
-            
-            if handling == "discard":
-                # 丢弃：视为无效密钥，不做任何处理
-                logger.info(f"⏰❌ 429密钥已丢弃: {key[:20]}... (RATE_LIMITED_HANDLING=discard)")
-            elif handling == "save_only":
-                # 仅保存：添加到rate_limited_keys列表，仅保存到本地文件
-                rate_limited_keys.append(key)
-                logger.info(f"⏰💾 429密钥仅本地保存: {key[:20]}... (RATE_LIMITED_HANDLING=save_only)")
-            elif handling == "sync":
-                # 同步：视为正常密钥，同步到正常分组
-                rate_limited_keys.append(key)  # 仍然保存到429文件作为记录
-                valid_keys.append(key)  # 同时添加到有效密钥，会同步到正常分组
-                logger.info(f"⏰✅ 429密钥视为正常密钥: {key[:20]}... (RATE_LIMITED_HANDLING=sync)")
-            elif handling == "sync_separate":
-                # 分开同步：同步到单独的429分组
-                rate_limited_keys.append(key)  # 保存到429文件
-                logger.info(f"⏰🔄 429密钥将同步到独立分组: {key[:20]}... (RATE_LIMITED_HANDLING=sync_separate)")
-            else:
-                # 默认行为：仅保存到本地
-                rate_limited_keys.append(key)
-                logger.warning(f"⏰ 未知的RATE_LIMITED_HANDLING值: {handling}，使用默认行为(save_only)")
-        else:
-            logger.info(t('invalid_key', key, validation_result))
+        key_validator.add_key(key, repo_name, file_path, file_url)
+    
+    logger.info(f"📥 已添加 {len(keys)} 个密钥到验证队列")
 
-    # 保存结果
-    if valid_keys:
-        file_manager.save_valid_keys(repo_name, file_path, file_url, valid_keys)
-        logger.info(t('saved_valid_keys', len(valid_keys)))
-        # 添加到同步队列（不阻塞主流程）
-        try:
-            # 添加到两个队列
-            sync_utils.add_keys_to_queue(valid_keys)
-            logger.info(t('added_to_queue', len(valid_keys)))
-        except Exception as e:
-            logger.error(t('error_adding_to_queue', e))
-
-    if rate_limited_keys:
-        file_manager.save_rate_limited_keys(repo_name, file_path, file_url, rate_limited_keys)
-        logger.info(t('saved_rate_limited_keys', len(rate_limited_keys)))
-        
-        # 根据配置决定是否将429密钥同步到独立分组
-        if Config.RATE_LIMITED_HANDLING.strip().lower() == "sync_separate":
-            try:
-                sync_utils.add_rate_limited_keys_to_queue(rate_limited_keys)
-                logger.info(f"⏰ 已添加 {len(rate_limited_keys)} 个429密钥到独立上传队列")
-            except Exception as e:
-                logger.error(f"⏰ 添加429密钥到队列时出错: {e}")
-
-    if paid_keys:
-        file_manager.save_paid_keys(repo_name, file_path, file_url, paid_keys)
-        logger.info(f"💎 已保存付费密钥: {len(paid_keys)} 个")
-        
-        # 根据配置决定是否上传付费密钥到GPT-load
-        if Config.parse_bool(Config.GPT_LOAD_PAID_SYNC_ENABLED):
-            try:
-                sync_utils.add_paid_keys_to_queue(paid_keys)
-                logger.info(f"💎 已添加 {len(paid_keys)} 个付费密钥到上传队列")
-            except Exception as e:
-                logger.error(f"💎 添加付费密钥到队列时出错: {e}")
-        else:
-            logger.info(f"💎 付费密钥上传功能已关闭，仅本地保存 {len(paid_keys)} 个密钥")
-
-    return len(valid_keys), len(rate_limited_keys)
+    return len(keys)
 
 
 def validate_gemini_key(api_key: str) -> Union[bool, str]:
@@ -407,6 +327,9 @@ def main():
         logger.info(f"💎 付费密钥队列: {gpt_load_paid_queue_count} 个待发送")
     if gpt_load_rate_limited_queue_count > 0:
         logger.info(f"⏰ 429密钥队列: {gpt_load_rate_limited_queue_count} 个待发送")
+    
+    # 显示异步验证器状态
+    logger.info(f"🚀 异步密钥验证器: 已启动，并发数 = {key_validator.max_workers}")
 
     # 3. 显示系统信息
     search_queries = file_manager.get_search_queries()
@@ -453,6 +376,9 @@ def main():
             query_count = 0
             loop_processed_files = 0
             reset_skip_stats()
+            
+            # 重置验证器统计（每轮循环开始时）
+            key_validator.reset_stats()
 
             for i, q in enumerate(search_queries, 1):
                 normalized_q = normalize_query(q)
@@ -484,9 +410,16 @@ def main():
 
                             # 每20个item保存checkpoint并显示进度
                             if item_index % 20 == 0:
-                                logger.info(t('progress', item_index, len(items), q, query_valid_keys, query_rate_limited_keys, total_keys_found, total_rate_limited_keys))
+                                # 获取当前验证统计
+                                validator_stats = key_validator.get_stats()
+                                logger.info(t('progress', item_index, len(items), q, validator_stats['valid_keys'], validator_stats['rate_limited_keys'], total_keys_found, total_rate_limited_keys))
                                 file_manager.save_checkpoint(checkpoint)
                                 file_manager.update_dynamic_filenames()
+                                
+                                # 定期刷新验证结果
+                                valid_count, rate_limited_count, paid_count = key_validator.flush_results()
+                                if valid_count > 0 or rate_limited_count > 0:
+                                    logger.info(f"💾 刷新验证结果: 有效 {valid_count}, 限速 {rate_limited_count}, 付费 {paid_count}")
 
                             # 检查是否应该跳过此item
                             should_skip, skip_reason = should_skip_item(item, checkpoint)
@@ -494,11 +427,8 @@ def main():
                                 logger.info(t('skipping_item', item.get('path','').lower(), item_index, skip_reason))
                                 continue
 
-                            # 处理单个item
-                            valid_count, rate_limited_count = process_item(item)
-
-                            query_valid_keys += valid_count
-                            query_rate_limited_keys += rate_limited_count
+                            # 处理单个item（将密钥添加到异步验证队列）
+                            keys_found = process_item(item)
                             query_processed += 1
 
                             # 记录已扫描的SHA
@@ -514,11 +444,22 @@ def main():
 
 
 
+                        # 等待当前查询的所有密钥验证完成
+                        logger.info(f"⏳ 查询 {i}/{len(search_queries)} 搜索完成，等待密钥验证...")
+                        key_validator.wait_completion(timeout=300)  # 最多等待5分钟
+                        
+                        # 刷新验证结果并获取统计
+                        valid_count, rate_limited_count, paid_count = key_validator.flush_results()
+                        query_valid_keys = valid_count
+                        query_rate_limited_keys = rate_limited_count
+                        
                         total_keys_found += query_valid_keys
                         total_rate_limited_keys += query_rate_limited_keys
 
                         if query_processed > 0:
                             logger.info(t('query_complete', i, len(search_queries), query_processed, query_valid_keys, query_rate_limited_keys))
+                            if paid_count > 0:
+                                logger.info(f"💎 本次查询发现付费密钥: {paid_count} 个")
                         else:
                             logger.info(t('query_all_skipped', i, len(search_queries)))
 
@@ -570,6 +511,15 @@ def main():
                     logger.info(t('taking_break', query_count))
                     time.sleep(1)
 
+            # 等待本轮所有密钥验证完成
+            logger.info(f"⏳ 循环 {loop_count} 搜索完成，等待所有密钥验证完成...")
+            key_validator.wait_completion(timeout=600)  # 最多等待10分钟
+            
+            # 最后一次刷新验证结果
+            valid_count, rate_limited_count, paid_count = key_validator.flush_results()
+            if valid_count > 0 or rate_limited_count > 0:
+                logger.info(f"💾 最终刷新: 有效 {valid_count}, 限速 {rate_limited_count}, 付费 {paid_count}")
+            
             logger.info(t('loop_complete', loop_count, loop_processed_files, total_keys_found, total_rate_limited_keys))
 
             # SHA自动清理 - 每N轮循环后执行一次
@@ -617,15 +567,31 @@ def main():
 
         except KeyboardInterrupt:
             logger.info(t('interrupted'))
+            
+            # 等待验证完成并刷新结果
+            logger.info("⏳ 等待剩余密钥验证完成...")
+            key_validator.wait_completion(timeout=120)
+            key_validator.flush_results()
+            
             checkpoint.update_scan_time()
             file_manager.save_checkpoint(checkpoint)
             logger.info(t('final_stats', total_keys_found, total_rate_limited_keys))
             logger.info(t('shutting_down'))
+            
+            # 关闭验证器和同步工具
+            key_validator.shutdown()
             sync_utils.shutdown()
             break
         except Exception as e:
             logger.error(t('unexpected_error', e))
             traceback.print_exc()
+            
+            # 刷新当前验证结果
+            try:
+                key_validator.flush_results()
+            except:
+                pass
+            
             logger.info(t('continuing'))
             continue
 
