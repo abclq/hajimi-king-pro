@@ -4,6 +4,8 @@ on:
   release:
     types: [published]  # 只在发布 Release 时触发
   push:
+    branches:
+      - dev  # dev 分支每次推送都构建
     tags:
       - 'v*'  # 推送版本标签时触发
   workflow_dispatch:  # 允许手动触发
@@ -41,7 +43,8 @@ jobs:
           tags: |
             type=ref,event=branch
             type=ref,event=tag
-            type=raw,value=latest,enable={{is_default_branch}}
+            type=raw,value=latest,enable=${{ github.event_name == 'release' }}
+            type=raw,value=dev,enable=${{ github.ref == 'refs/heads/dev' }}
             type=sha,prefix={{branch}}-
 
       - name: Build and push Docker image
