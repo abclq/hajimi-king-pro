@@ -5,9 +5,8 @@ on:
     types: [published]  # 只在发布 Release 时触发
   push:
     branches:
-      - dev  # dev 分支每次推送都构建
-    tags:
-      - 'v*'  # 推送版本标签时触发
+      - dev
+      - main
   workflow_dispatch:  # 允许手动触发
 
 env:
