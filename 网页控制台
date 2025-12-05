@@ -1,0 +1,211 @@
+ 部署前台 “网页控制台” (web_console)
+
+a. 创建目录并进入：
+
+BASH
+mkdir ~/web_console && cd ~/web_console
+b. 安装依赖：
+
+BASH
+pip3 install streamlit pandas dingtalkchatbot st-copy-to-clipboard
+c. 创建代码文件：
+将下面的净化版代码写入 web_app.py 文件。
+
+d. 查找 streamlit 绝对路径：
+
+BASH
+which streamlit
+# 这会输出一个路径，例如 /home/your_user/.local/bin/streamlit，请复制它
+e. 启动前台服务：
+
+BASH
+# ‼️ 警告：这里的 [YOUR_STREAMLIT_ABSOLUTE_PATH] 必须替换成你上一步查到的真实路径
+nohup [YOUR_STREAMLIT_ABSOLUTE_PATH] run web_app.py > web.log 2>&1 &
+第二部分：可分享的最终代码 (净化版)
+1. 后台启动指令 (hajimi-king-pro)
+
+BASH
+# (在 ~/hajimi-king-pro 目录下执行)
+nohup python3 app/hajimi_king.py > miner.log 2>&1 &
+2. 前台代码文件 (web_app.py V12 · 净化版)
+
+在 ~/web_console 目录下，执行以下整块命令，即可自动创建并写入最终的净化版代码。
+
+BASH
+cat << 'EOF' > web_app.py
+import streamlit as st
+import sqlite3
+import pandas as pd
+import os
+import subprocess
+import logging
+from dingtalkchatbot.chatbot import DingtalkChatbot
+from st_copy_to_clipboard import st_copy_to_clipboard
+
+# --- 配置区 (V12) ---
+BASE_DIR = os.path.expanduser('~/hajimi-king-pro')
+DB_PATH = os.path.join(BASE_DIR, 'data/keys.db')
+LOG_PATH = os.path.join(BASE_DIR, 'miner.log')
+
+# --- 核心安全与通知配置 (请在此处填入你的信息) ---
+APP_PASSWORD = "YOUR_APP_PASSWORD"  # 在这里填入你的访问密码
+DINGTALK_WEBHOOK = "YOUR_DINGTALK_WEBHOOK_URL"  # 在这里填入你的钉钉机器人 Webhook 地址
+
+# --- 日志与函数库 ---
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
+
+def send_dingtalk_notification(message):
+    if not DINGTALK_WEBHOOK or "YOUR_DINGTALK_WEBHOOK_URL" in DINGTALK_WEBHOOK:
+        st.toast("钉钉 Webhook 未配置!", icon="⚠️")
+        return
+    try:
+        full_message = {
+            "msgtype": "markdown",
+            "markdown": {
+                "title":"Hajimi控制台通知",
+                "text": f"### 【Hajimi控制台】\n\n{message}"
+            }
+        }
+        xiaoding = DingtalkChatbot(DINGTALK_WEBHOOK)
+        xiaoding.send_markdown(full_message['markdown']['title'], full_message['markdown']['text'])
+        st.toast("🎉 通知已成功发送!", icon="✅")
+    except Exception as e:
+        st.error(f"发送失败: {e}")
+
+def get_keys_by_type(key_type):
+    if not os.path.exists(DB_PATH):
+        return pd.DataFrame(), f"数据库文件不存在: {DB_PATH}"
+    try:
+        conn_str = f'file:{DB_PATH}?mode=ro'
+        conn = sqlite3.connect(conn_str, uri=True)
+        query = f"SELECT id, api_key, repo_name, file_url, created_at FROM keys WHERE key_type = '{key_type}' ORDER BY created_at DESC"
+        df = pd.read_sql_query(query, conn)
+        conn.close()
+        return df, None
+    except Exception as e:
+        return pd.DataFrame(), f"读取数据库时发生未知错误: {e}"
+
+def display_key_table(df, table_identifier):
+    if df.empty:
+        st.info(f"暂无数据。")
+        return
+
+    for index, row in df.iterrows():
+        col1, col2 = st.columns([4, 1])
+        with col1:
+            st.code(row['api_key'], language=None)
+        with col2:
+            st_copy_to_clipboard(text=row['api_key'], before_copy_label="复制", after_copy_label="已复制!", key=f"copy_{table_identifier}_{row['id']}")
+
+# --- 页面渲染 (V12 · 可靠版) ---
+st.set_page_config(page_title="Hajimi King Pro 控制台", layout="wide")
+st.title("👑 Hajimi King Pro 控制台 (V12 · 可靠版)")
+
+# 密码验证
+st.sidebar.title("身份验证")
+password = st.sidebar.text_input("请输入访问密码:", type="password")
+if password != APP_PASSWORD:
+    st.error("❌ 密码错误，禁止访问！")
+    st.stop()
+st.sidebar.success("✅ 验证通过")
+
+# 手动刷新按钮
+st.sidebar.markdown("---")
+if st.sidebar.button("🔄 刷新数据 (强制重载)"):
+    st.rerun()
+
+# 心跳监控
+if 'heartbeat_sent' not in st.session_state:
+    send_dingtalk_notification("网页控制台服务已启动 (V12 · 可靠版)。")
+    st.session_state.heartbeat_sent = True
+
+# 数据加载
+df_paid, err_paid = get_keys_by_type('paid')
+df_valid, err_valid = get_keys_by_type('valid')
+df_limited, err_limited = get_keys_by_type('rate_limited')
+
+# 总览仪表盘
+st.header("📊 总览仪表盘")
+col1, col2, col3 = st.columns(3)
+
+def create_dashboard_card(df, title, key_type):
+    with st.expander(f"{title}", expanded=True):
+        st.metric("总数", len(df))
+        if not df.empty:
+            all_keys = "\n".join(df['api_key'])
+            st.info("⬇️ 全选 (Ctrl+A) 并复制 (Ctrl+C)")
+            st.text_area(
+                "all_keys_textarea", 
+                value=all_keys, 
+                height=200, 
+                disabled=True, 
+                label_visibility="collapsed",
+                key=f"textarea_all_{key_type}"
+            )
+        with st.container(height=300):
+             display_key_table(df, key_type)
+
+with col1:
+    create_dashboard_card(df_paid, "💎 付费密钥", "paid")
+with col2:
+    create_dashboard_card(df_valid, "✅ 有效密钥", "valid")
+with col3:
+    create_dashboard_card(df_limited, "⚠️ 受限密钥", "limited")
+
+st.markdown("---") 
+
+# 功能区 (日志和手动通知)
+tab_log, tab_notify = st.tabs(["挖矿日志 📜", "手动通知 🔔"])
+with tab_log:
+    st.header("📜 后台挖矿程序实时日志")
+    log_lines = st.slider("选择日志行数:", 10, 500, 50)
+    if os.path.exists(LOG_PATH):
+        result = subprocess.run(['tail', '-n', str(log_lines), LOG_PATH], capture_output=True, text=True)
+        st.code(result.stdout, language='log')
+    else:
+        st.warning(f"日志文件不存在: {LOG_PATH}")
+with tab_notify:
+    st.header("🔔 手动发送钉钉通知")
+    with st.form("manual_notify_form"):
+        message_content = st.text_area("输入消息内容:", key="manual_message")
+        submitted = st.form_submit_button("发送到钉钉")
+        if submitted and message_content:
+            send_dingtalk_notification(message_content)
+
+# 批量推送功能区
+st.sidebar.markdown("---")
+st.sidebar.title("🚨 批量推送")
+
+def push_all_available_keys():
+    df_paid, err_paid = get_keys_by_type('paid')
+    df_valid, err_valid = get_keys_by_type('valid')
+    
+    all_keys_df = pd.concat([df_paid, df_valid], ignore_index=True)
+
+    if err_paid or err_valid:
+        st.sidebar.error("查询数据库时出错。")
+        return
+    
+    if all_keys_df.empty:
+        st.sidebar.warning("当前无任何付费或有效密钥可推送。")
+        return
+
+    keys_list = all_keys_df['api_key'].tolist()
+    num_keys = len(keys_list)
+    keys_string = "\n".join(keys_list)
+    
+    message = (
+        f"**发现 {num_keys} 个可用密钥 (付费+有效):**\n\n"
+        f"```\n"
+        f"{keys_string}\n"
+        f"```"
+    )
+    
+    send_dingtalk_notification(message)
+
+if st.sidebar.button("🚀 推送全部可用密钥 (付费+有效)"):
+    push_all_available_keys()
+
+EOF
+现在这份文档就非常干净和安全了，可以放心地分享或保存
